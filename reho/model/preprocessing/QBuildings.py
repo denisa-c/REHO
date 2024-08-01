@@ -92,7 +92,7 @@ class QBuildingsReader:
         return
 
     def read_csv(self, buildings_filename='buildings.csv', nb_buildings=None,
-                 roofs_filename='roofs.csv', facades_filename='facades.csv', district=None):
+                 roofs_filename='roofs.csv', facades_filename='facades.csv', district=None, id_building=None):
         """
         Read buildings-related data from CSV files and prepare it for the REHO model.
 
@@ -145,6 +145,10 @@ class QBuildingsReader:
         if district is not None:
             # Filter the buildings based on the specified district
             self.data['buildings'] = self.data['buildings'][self.data['buildings']['NOMSECTEUR'] == district]
+
+        if id_building is not None:
+            # Filter the buildings based on the specified id_building
+            self.data['buildings'] = self.data['buildings'][self.data['buildings']['id_building'] == id_building]
 
         if nb_buildings is None:
             nb_buildings = self.data['buildings'].shape[0]
