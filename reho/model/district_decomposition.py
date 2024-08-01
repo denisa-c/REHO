@@ -1169,10 +1169,12 @@ class district_decomposition:
                 if isinstance(self.parameters[key], (int, float)):
                     parameters_SP[key] = self.parameters[key]
                 elif self.parameters[key].shape[0] >= self.DW_params['timesteps']:  # if demands profiles (heat gains / DHW / electricity) are set for more than 1 building
-                    if len(self.infrastructure.houses) < self.DW_params['timesteps']:
+                    try:
                         nb_buildings = round(self.parameters[key].shape[0]/self.DW_params['timesteps'])
                         profile_building_x = self.parameters[key].reshape(nb_buildings, self.DW_params['timesteps'])
                         parameters_SP[key] = profile_building_x[ID]
+                    except:
+                        parameters_SP[key] = self.parameters[key][ID]
                 else:
                     parameters_SP[key] = self.parameters[key][ID]
         return buildings_data_SP, parameters_SP

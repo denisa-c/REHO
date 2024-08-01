@@ -1,6 +1,7 @@
 from datetime import timedelta
 from reho.model.preprocessing.sia_parser import *
 from reho.model.preprocessing.QBuildings import *
+import multiprocessing as mp
 
 __doc__ = """
 Generates the buildings profiles for domestic hot water (DHW) demand, domestic electricity demand, internal heat gains, and solar gains.
@@ -17,6 +18,101 @@ def reference_temperature_profile(parameters_to_ampl, cluster):
         np_temperature = np.append(np_temperature, np.tile(T_comfort_min_0[key], total_timesteps))
 
     return np_temperature
+
+
+def get_eud_profiles(buildings_data, b, cluster, df_SIA_380, df_SIA_2024, include_stochasticity, sd_stochasticity, df_timestamp, use_custom_profiles):
+    classes = buildings_data[b]['id_class'].split('/')
+    if isinstance(buildings_data[b]['ratio'], float):
+        ratios = str(buildings_data[b]['ratio'])
+    else:
+        ratios = buildings_data[b]['ratio'].split('/')
+    status_buildings = buildings_data[b]['status'].split(',')
+    np_gain_class = np.zeros(cluster['Periods'] * cluster['PeriodDuration'] + 2)
+    np_dhw_class = np.zeros(cluster['Periods'] * cluster['PeriodDuration'] + 2)
+    np_el_class = np.zeros(cluster['Periods'] * cluster['PeriodDuration'] + 2)
+    for i, class_380 in enumerate(classes):
+        # share of rooms for building type
+        rooms = read_sia2024_rooms_sia380_1(class_380, df_SIA_380)
+        status = ''.join(filter(str.isalnum, status_buildings[i]))
+        if class_380 == 'I' or class_380 == 'II':
+            area_net_floor = buildings_data[b]['ERA'] / 1.245
+        else:
+            area_net_floor = buildings_data[b]['ERA']
+        area_net_floor = area_net_floor * float(ratios[i])
+        np_gain = np.array([])
+        np_dhw = np.array([])
+        np_el = np.array([])
+
+        if include_stochasticity:
+            [RV_scaling, SF] = create_random_var(sd_stochasticity[0], sd_stochasticity[1])
+
+        for p in df_timestamp.index:  # get profiles for each typical day
+
+            df_profiles = daily_profiles_with_monthly_deviation(status, rooms, df_timestamp.xs(p).Date, df_SIA_2024)
+            if include_stochasticity:
+                df_profiles = apply_stochasticity(df_profiles, RV_scaling, SF)
+
+            df_custom_profiles = pd.DataFrame()
+            if use_custom_profiles:
+                for key, df_key in use_custom_profiles.items():
+                    df_custom_profiles[key] = df_key.xs(i + 1, level='Period').loc[:, b]
+                if include_stochasticity:
+                    df_custom_profiles = apply_stochasticity(df_custom_profiles, RV_scaling, SF)
+
+            if not df_custom_profiles.empty and 'electricity' in df_custom_profiles.columns:
+                conv_heat_factor = 0.70
+                elec_gain = conv_heat_factor * df_custom_profiles['electricity']
+                elec = df_custom_profiles['electricity']
+            else:
+                elec_gain = df_profiles['elecgain_W/m2'] * area_net_floor
+                elec = df_profiles['electricity_W/m2'] * area_net_floor
+
+            if not df_custom_profiles.empty and 'occupancy' in df_custom_profiles.columns:
+                people_gain = df_custom_profiles['occupancy']
+            else:
+                people_gain = df_profiles['heatgainpeople_W/m2'] * area_net_floor
+
+            if not df_custom_profiles.empty and 'dhw' in df_custom_profiles.columns:
+                hotwater = df_custom_profiles['dhw']
+            else:
+                hotwater = df_profiles['hotwater_l/m2'] * area_net_floor
+
+            heatgain_day = (people_gain + elec_gain) / 1000  # kW profiles for each typical day
+            hot_water_day = hotwater  # L profiles for each typical day
+            electric_day = elec / 1000  # kW profiles for each typical day
+
+            if p not in df_timestamp.index.tolist()[-2:]:
+                # sort it correctly (if first hour is not 12:00)
+                begin = df_timestamp.xs(p).Date.hour
+
+                # Size = 24 hours
+                heat_day = np.concatenate((heatgain_day.iloc[begin:].values, heatgain_day.iloc[:begin].values))
+                dhw_day = np.concatenate((hot_water_day.iloc[begin:].values, hot_water_day.iloc[:begin].values))
+                el_day = np.concatenate((electric_day.iloc[begin:].values, electric_day.iloc[:begin].values))
+
+                # Size = PeriodDuration (= TimeEnd in ampl)
+                heat_period = np.tile(heat_day, round(cluster['PeriodDuration'] / 24))
+                dhw_period = np.tile(dhw_day, round(cluster['PeriodDuration'] / 24))
+                el_period = np.tile(el_day, round(cluster['PeriodDuration'] / 24))
+
+            elif p == df_timestamp.index.tolist()[-2:][0]:  # Minimum period
+                heat_period = np.array([min(heatgain_day)])
+                dhw_period = np.array([max(dhw_day)])
+                el_period = np.array([max(el_day)])
+            else:  # Maximum period
+                heat_period = np.array([max(heatgain_day)])
+                dhw_period = np.array([max(dhw_day)])
+                el_period = np.array([max(el_day)])
+
+            np_gain = np.concatenate((np_gain, heat_period))
+            np_dhw = np.concatenate((np_dhw, dhw_period))
+            np_el = np.concatenate((np_el, el_period))
+
+        np_gain_class += np_gain
+        np_dhw_class += np_dhw
+        np_el_class += np_el
+
+    return np_gain_class, np_dhw_class, np_el_class
 
 
 def eud_profiles(buildings_data, cluster, df_SIA_380, df_SIA_2024, df_timestamp,
@@ -87,102 +183,17 @@ def eud_profiles(buildings_data, cluster, df_SIA_380, df_SIA_2024, df_timestamp,
         for key, val in use_custom_profiles.items():
             use_custom_profiles[key] = annual_to_typical(cluster, annual_file=val, timestamp_data=df_timestamp)
 
-    for b in buildings_data:  # iterate over buildings
-        # get SIA Profiles
-        classes = buildings_data[b]['id_class'].split('/')
-        if isinstance(buildings_data[b]['ratio'], float):
-            ratios = str(buildings_data[b]['ratio'])
-        else:
-            ratios = buildings_data[b]['ratio'].split('/')
-        status_buildings = buildings_data[b]['status'].split(',')
-        np_gain_class = np.zeros(cluster['Periods'] * cluster['PeriodDuration'] + 2)
-        np_dhw_class = np.zeros(cluster['Periods'] * cluster['PeriodDuration'] + 2)
-        np_el_class = np.zeros(cluster['Periods'] * cluster['PeriodDuration'] + 2)
-        for i, class_380 in enumerate(classes):
-            # share of rooms for building type
-            rooms = read_sia2024_rooms_sia380_1(class_380, df_SIA_380)
-            status = ''.join(filter(str.isalnum, status_buildings[i]))
-            if class_380 == 'I' or class_380 == 'II':
-                area_net_floor = buildings_data[b]['ERA'] / 1.245
-            else:
-                area_net_floor = buildings_data[b]['ERA']
-            area_net_floor = area_net_floor * float(ratios[i])
-            np_gain = np.array([])
-            np_dhw = np.array([])
-            np_el = np.array([])
+    pool = mp.Pool(mp.cpu_count())
+    results = {b: pool.apply_async(get_eud_profiles, args=(buildings_data, b, cluster, df_SIA_380, df_SIA_2024,
+                                                           include_stochasticity, sd_stochasticity, df_timestamp, use_custom_profiles)) for b in buildings_data}
 
-            if include_stochasticity:
-                [RV_scaling, SF] = create_random_var(sd_stochasticity[0], sd_stochasticity[1])
-
-            for p in df_timestamp.index:  # get profiles for each typical day
-
-                df_profiles = daily_profiles_with_monthly_deviation(status, rooms, df_timestamp.xs(p).Date, df_SIA_2024)
-                if include_stochasticity:
-                    df_profiles = apply_stochasticity(df_profiles, RV_scaling, SF)
-
-                df_custom_profiles = pd.DataFrame()
-                if use_custom_profiles:
-                    for key, df_key in use_custom_profiles.items():
-                        df_custom_profiles[key] = df_key.xs(i + 1, level='Period').loc[:, b]
-                    if include_stochasticity:
-                        df_custom_profiles = apply_stochasticity(df_custom_profiles, RV_scaling, SF)
-
-                if not df_custom_profiles.empty and 'electricity' in df_custom_profiles.columns:
-                    conv_heat_factor = 0.70
-                    elec_gain = conv_heat_factor * df_custom_profiles['electricity']
-                    elec = df_custom_profiles['electricity']
-                else:
-                    elec_gain = df_profiles['elecgain_W/m2'] * area_net_floor
-                    elec = df_profiles['electricity_W/m2'] * area_net_floor
-
-                if not df_custom_profiles.empty and 'occupancy' in df_custom_profiles.columns:
-                    people_gain = df_custom_profiles['occupancy']
-                else:
-                    people_gain = df_profiles['heatgainpeople_W/m2'] * area_net_floor
-
-                if not df_custom_profiles.empty and 'dhw' in df_custom_profiles.columns:
-                    hotwater = df_custom_profiles['dhw']
-                else:
-                    hotwater = df_profiles['hotwater_l/m2'] * area_net_floor
-
-                heatgain_day = (people_gain + elec_gain) / 1000  # kW profiles for each typical day
-                hot_water_day = hotwater  # L profiles for each typical day
-                electric_day = elec / 1000  # kW profiles for each typical day
-
-                if p not in df_timestamp.index.tolist()[-2:]:
-                    # sort it correctly (if first hour is not 12:00)
-                    begin = df_timestamp.xs(p).Date.hour
-
-                    # Size = 24 hours
-                    heat_day = np.concatenate((heatgain_day.iloc[begin:].values, heatgain_day.iloc[:begin].values))
-                    dhw_day = np.concatenate((hot_water_day.iloc[begin:].values, hot_water_day.iloc[:begin].values))
-                    el_day = np.concatenate((electric_day.iloc[begin:].values, electric_day.iloc[:begin].values))
-
-                    # Size = PeriodDuration (= TimeEnd in ampl)
-                    heat_period = np.tile(heat_day, round(cluster['PeriodDuration'] / 24))
-                    dhw_period = np.tile(dhw_day, round(cluster['PeriodDuration'] / 24))
-                    el_period = np.tile(el_day, round(cluster['PeriodDuration'] / 24))
-
-                elif p == df_timestamp.index.tolist()[-2:][0]:  # Minimum period
-                    heat_period = np.array([min(heatgain_day)])
-                    dhw_period = np.array([max(dhw_day)])
-                    el_period = np.array([max(el_day)])
-                else:  # Maximum period
-                    heat_period = np.array([max(heatgain_day)])
-                    dhw_period = np.array([max(dhw_day)])
-                    el_period = np.array([max(el_day)])
-
-                np_gain = np.concatenate((np_gain, heat_period))
-                np_dhw = np.concatenate((np_dhw, dhw_period))
-                np_el = np.concatenate((np_el, el_period))
-
-            np_gain_class += np_gain
-            np_dhw_class += np_dhw
-            np_el_class += np_el
-
+    for b in buildings_data:
+        (np_gain_class, np_dhw_class, np_el_class) = results[b].get()
         np_gain_all = np.append(np_gain_all, np_gain_class)
         np_dhw_all = np.append(np_dhw_all, np_dhw_class)
         np_el_all = np.append(np_el_all, np_el_class)
+
+    pool.close()
 
     return np_gain_all, np_dhw_all, np_el_all
 
