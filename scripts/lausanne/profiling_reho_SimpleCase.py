@@ -8,7 +8,7 @@ warnings.filterwarnings("ignore")
 tic = time.perf_counter()
 
 scenarios_list = ['totex']
-nb_buildings_list = [500]
+nb_buildings_list = [5000]
 nb_excl_list = [1]
 nb_excl_list.reverse()
 excluded_list = ['NG_Cogeneration', 'Battery', 'OIL_Boiler', 'NG_boiler', 'ThermalSolar', 'WaterTankSH', 'HeatPump', 'PV']
@@ -16,7 +16,6 @@ excluded_list = ['NG_Cogeneration', 'Battery', 'OIL_Boiler', 'NG_boiler', 'Therm
 results = {}  # Dictionary to store results
 
 if __name__ == '__main__':
-    method = {'district-scale': True}
     for scenarios in scenarios_list:
         for nb_buildings in nb_buildings_list:
             for nb_excl in nb_excl_list:
@@ -48,12 +47,9 @@ if __name__ == '__main__':
                     units = infrastructure.initialize_units(scenario, grids)
 
                     # Run optimization
-                    reho_model = reho(qbuildings_data=qbuildings_data, units=units, grids=grids, parameters=parameters,
+                    method = {'district-scale': False, 'building-scale': True}
+                    reho_model = reho(qbuildings_data=qbuildings_data, units=units, grids=grids, parameters=parameters, solver="gurobiasl",
                                       cluster=cluster, scenario=scenario, method=method, scenarios=scenarios, nb_buildings=nb_buildings, nb_excl=nb_excl)
-
-                    reho_model.method['building_scale'] = True
-                    #reho_model.method['district_scale'] = True
-                    #reho_model.method['parallel_computation'] = True
 
                     if 'totex' in scenarios:
                         reho_model.single_optimization()
