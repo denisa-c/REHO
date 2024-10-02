@@ -1,4 +1,7 @@
+import sys
+sys.path.append('/home/ecurbtw/REHO')
 from reho.model.reho import *
+
 
 
 if __name__ == '__main__':

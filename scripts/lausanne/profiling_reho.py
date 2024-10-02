@@ -1,3 +1,5 @@
+import sys
+sys.path.append('/home/ecurbtw/REHO')
 from reho.model.reho import *
 import time
 import warnings
@@ -30,7 +32,7 @@ if __name__ == '__main__':
                 for nb_buildings in nb_buildings_list:
                     # Set building parameters
                     reader = QBuildingsReader()
-                    qbuildings_data = reader.read_csv(buildings_filename='../lausanne/QBuildings/Lausanne_sectors.csv', nb_buildings=nb_buildings)
+                    qbuildings_data = reader.read_csv(buildings_filename='QBuildings/Lausanne_sectors.csv', nb_buildings=nb_buildings)
 
                     # Set specific parameters
                     parameters = {}

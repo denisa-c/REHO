@@ -1,3 +1,6 @@
+import sys
+sys.path.append('/home/ecurbtw/REHO')
+from reho.model.reho import *
 from reho.model.reho import *
 from reho.plotting import plotting
 

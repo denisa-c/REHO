@@ -486,7 +486,7 @@ class reho(district_decomposition):
     def single_optimization(self, Pareto_ID=0):
         Scn_ID = self.scenario['name']
         if self.method['district-scale'] or self.method['building-scale']:
-            ampl, exitcode = self.execute_dantzig_wolfe_decomposition(self.scenario, Scn_ID, Pareto_ID=Pareto_ID)
+            ampl, exitcode = self.execute_dantzig_wolfe_decomposition(self.scenario, Scn_ID, Pareto_ID=Pareto_ID) # TODO: profile this
 
         else:
             if self.method['use_facades'] or self.method['use_pv_orientation']:
@@ -510,6 +510,7 @@ class reho(district_decomposition):
             ampl.solve()
             exitcode = exitcode_from_ampl(ampl)
 
+        # TODO: profile this --> post processing
         self.add_df_Results(ampl, Scn_ID, Pareto_ID, self.scenario)
         self.get_KPIs(Scn_ID, Pareto_ID=Pareto_ID)
 

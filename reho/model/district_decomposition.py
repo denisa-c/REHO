@@ -603,6 +603,7 @@ class district_decomposition:
         # Solve ampl_MP
         ampl_MP.solve()
 
+        # profile this: post porcessing
         df_Results_MP = WR.get_df_Results_from_MP(ampl_MP, binary, self.method, self.infrastructure, read_DHN=read_DHN, scenario=scenario)
         self.logger.info(str(ampl_MP.getCurrentObjective().getValues().toPandas()))
 

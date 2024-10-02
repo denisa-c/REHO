@@ -1,0 +1,5 @@
+#           time             counts   unit events
+     0.014880059        170,297,795        cycles                                                                
+     0.014880059             462.29 Joules power/energy-pkg/                                                     
+     0.014880059             844.00 Joules power/energy-psys/                                                    
+     0.014880059              59.45 Joules power/energy-ram/                                                     
